@@ -1,4 +1,11 @@
-"""CLI entry point that orchestrates the borehole log OCR pipeline."""
+"""CLI entry point that orchestrates the modular borehole log OCR pipeline.
+
+This script wires together the individual steps implemented in:
+- pdf_utils.convert_pdf_to_images: PDF -> per-page images
+- table_detection.detect_table_and_cells: find table grid + cell boxes
+- cell_processing.crop_cells / ocr_cells: crop images + OCR per cell
+- postprocess.postprocess_and_export: aggregate OCR into structured CSV
+"""
 
 from __future__ import annotations
 
@@ -8,8 +15,9 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
 from cell_processing import crop_cells, ocr_cells
+from debug_vis import draw_cells_overlay
 from pdf_utils import convert_pdf_to_images
-from postprocess import compare_with_manual, postprocess_and_export
+from postprocess import postprocess_and_export
 from table_detection import detect_table_and_cells
 
 LOGGER = logging.getLogger(__name__)
@@ -26,11 +34,13 @@ def process_pdf(
     paddle_kwargs: Optional[Dict[str, object]] = None,
     tesseract_config: str = "--psm 6",
 ) -> Path:
-    """Run the complete PDF  CSV pipeline and return the output CSV path."""
+    """Run the full PDF -> CSV pipeline and return the structured CSV path."""
 
+    # Prepare working folders that hold intermediate outputs.
     work_path = Path(work_dir)
     images_dir = work_path / "pages"
     cells_dir = work_path / "cells"
+    debug_dir = work_path / "annotated"
     work_path.mkdir(parents=True, exist_ok=True)
 
     output_csv = (
@@ -41,7 +51,7 @@ def process_pdf(
 
     LOGGER.info("Starting processing for %s", input_pdf)
 
-    # Step 1: Convert PDF pages to high-resolution PNG files.
+    # 1) Convert PDF pages into high-resolution PNG images.
     images = convert_pdf_to_images(input_pdf, str(images_dir), dpi=dpi)
 
     all_records: List[Dict[str, object]] = []
@@ -54,7 +64,7 @@ def process_pdf(
             LOGGER.warning("Page %d skipped: %s", page_idx, exc)
             continue
 
-        # Step 2: Crop every detected cell so OCR keeps table context.
+        # 2) Crop every detected cell so OCR runs on cell-level images.
         crops = crop_cells(
             image_path,
             cell_bboxes,
@@ -63,7 +73,7 @@ def process_pdf(
             page_index=page_idx,
         )
 
-        # Step 3: OCR cell images with the chosen engine.
+        # 3) Run OCR on each cell image (Tesseract by default, Paddle optional).
         page_records = ocr_cells(
             crops,
             engine=ocr_engine,
@@ -72,10 +82,15 @@ def process_pdf(
         )
         all_records.extend(page_records)
 
+        # 4) Write an annotated debug image showing all cells (green) and
+        #    those with non-empty OCR text (inner red box).
+        debug_image_path = debug_dir / f"{Path(image_path).stem}_annotated.png"
+        draw_cells_overlay(image_path, cell_bboxes, str(debug_image_path), text_records=page_records)
+
     if not all_records:
         LOGGER.warning("No OCR records produced for %s", input_pdf)
 
-    # Step 4: Aggregate cell OCR into structured rows and export to CSV.
+    # 4) Aggregate cell OCR into depth intervals and export to CSV.
     LOGGER.info("Post-processing %d cell records", len(all_records))
     postprocess_and_export(
         all_records,
@@ -84,12 +99,12 @@ def process_pdf(
         description_columns=description_columns,
     )
 
-    LOGGER.info("Pipeline finished  %s", output_csv)
+    LOGGER.info("Pipeline finished -> %s", output_csv)
     return output_csv
 
 
 def _build_cli() -> argparse.ArgumentParser:
-    """Provide a CLI for running the pipeline end-to-end."""
+    """Create an argument parser so this module can be invoked as a script."""
 
     parser = argparse.ArgumentParser(description="Borehole table OCR pipeline")
     parser.add_argument("input_pdf", help="Path to the borehole log PDF")
@@ -138,7 +153,7 @@ def _build_cli() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    """Entry point executed when running ``python borehole_pipeline.py``."""
+    """Script entry point when running ``python borehole_main.py``."""
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     parser = _build_cli()

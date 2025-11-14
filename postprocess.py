@@ -55,10 +55,11 @@ def postprocess_and_export(
         ["file_name", "page_index", "row_index"]
     ):
         sorted_group = group.sort_values("column_index")
+        # Keep every detected cell in the raw mapping, even if OCR text is empty.
+        # This preserves the full table structure for debugging and downstream use.
         column_text = {
-            int(row.column_index): str(row.text).strip()
+            int(row.column_index): str(row.text or "").strip()
             for row in sorted_group.itertuples()
-            if str(row.text).strip()
         }
         depth_from, depth_to = _extract_depths(column_text, depth_columns)
         description = _build_description(column_text, depth_columns, description_columns)
