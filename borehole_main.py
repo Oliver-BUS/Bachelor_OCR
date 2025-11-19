@@ -17,7 +17,7 @@ from typing import Dict, List, Optional, Sequence
 from cell_processing import crop_cells, ocr_cells
 from debug_vis import draw_cells_overlay
 from pdf_utils import convert_pdf_to_images
-from postprocess import postprocess_and_export
+from postprocess import postprocess_and_export, export_cells_flat
 from table_detection import detect_table_and_cells
 
 LOGGER = logging.getLogger(__name__)
@@ -98,6 +98,10 @@ def process_pdf(
         depth_columns=depth_columns,
         description_columns=description_columns,
     )
+
+    # Additionally, export a flat per-cell CSV for simpler inspection.
+    cells_csv = work_path / f"{Path(input_pdf).stem}_cells.csv"
+    export_cells_flat(all_records, output_csv_path=str(cells_csv))
 
     LOGGER.info("Pipeline finished -> %s", output_csv)
     return output_csv

@@ -9,6 +9,14 @@ from typing import Dict, List, Optional, Sequence
 import cv2
 import numpy as np
 
+# Minimal compatibility shim for older PaddleOCR code on NumPy 2.x
+if not hasattr(np, "int"):
+    np.int = int  # type: ignore[attr-defined]
+if not hasattr(np, "float"):
+    np.float = float  # type: ignore[attr-defined]
+if not hasattr(np, "bool"):
+    np.bool = bool  # type: ignore[attr-defined]
+
 from models import CellBBox
 
 LOGGER = logging.getLogger(__name__)
@@ -74,20 +82,70 @@ def ocr_cells(
         from paddleocr import PaddleOCR  # type: ignore
 
         ocr = PaddleOCR(**(paddle_kwargs or {"use_angle_cls": True, "lang": "en"}))
+        logged_sample = False
         for cell in cells:
-            result = ocr.ocr(cell["cell_image_path"], cls=True)
+            # Full detection + recognition on the cropped cell image.
+            # PaddleOCR 3.x ocr() returns boxes + [text, score] pairs.
+            result = ocr.ocr(cell["cell_image_path"])
+
+            if not logged_sample:
+                LOGGER.info("PaddleOCR sample result for %s: %r", cell["cell_image_path"], result)
+                logged_sample = True
+
             texts: List[str] = []
             scores: List[float] = []
             xs: List[float] = []
             ys: List[float] = []
-            for line in result:
-                for box, (text, score) in line:
-                    texts.append(text)
-                    scores.append(float(score))
-                    # ``box`` is a quadrilateral in cell-image coordinates.
+
+            # result may be either:
+            #   [[box, [text, score]], ...]
+            # or wrapped per-image as:
+            #   [[[box, [text, score]], ...], ...]
+            def _yield_lines(res):
+                for item in res:
+                    if not item:
+                        continue
+                    if (
+                        isinstance(item, (list, tuple))
+                        and len(item) >= 2
+                        and isinstance(item[1], (list, tuple))
+                    ):
+                        yield item
+                    elif isinstance(item, (list, tuple)):
+                        for sub in item:
+                            if (
+                                isinstance(sub, (list, tuple))
+                                and len(sub) >= 2
+                                and isinstance(sub[1], (list, tuple))
+                            ):
+                                yield sub
+
+            for box, meta in _yield_lines(result):
+                if not meta:
+                    continue
+
+                text = str(meta[0] or "").strip()
+                if not text:
+                    continue
+
+                score_val: Optional[float] = None
+                if len(meta) >= 2:
+                    try:
+                        score_val = float(meta[1])
+                    except (TypeError, ValueError):
+                        score_val = None
+
+                texts.append(text)
+                if score_val is not None:
+                    scores.append(score_val)
+
+                # ``box`` is a quadrilateral in cell-image coordinates.
+                try:
                     for px, py in box:
                         xs.append(float(px))
                         ys.append(float(py))
+                except Exception:
+                    pass
 
             record = _build_record(
                 cell,
@@ -103,12 +161,22 @@ def ocr_cells(
                 text_x_min = bbox["x_min"] + min(xs)
                 text_y_min = bbox["y_min"] + min(ys)
                 text_x_max = bbox["x_min"] + max(xs)
-                text_y_max = bbox["y_max"] + max(ys)
+                text_y_max = bbox["y_min"] + max(ys)
                 record["text_bbox"] = {
                     "x_min": int(text_x_min),
                     "y_min": int(text_y_min),
                     "x_max": int(text_x_max),
                     "y_max": int(text_y_max),
+                }
+            elif texts:
+                # Fallback: we have recognised text but no explicit box coordinates;
+                # mark the whole cell as the text region so overlays still show red.
+                bbox = cell["bbox"]
+                record["text_bbox"] = {
+                    "x_min": int(bbox["x_min"]),
+                    "y_min": int(bbox["y_min"]),
+                    "x_max": int(bbox["x_max"]),
+                    "y_max": int(bbox["y_max"]),
                 }
 
             records.append(record)

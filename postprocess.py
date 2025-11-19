@@ -178,3 +178,37 @@ def _to_float(value: Optional[str]) -> Optional[float]:
         return float(value.replace(",", "."))
     except ValueError:
         return None
+
+
+def export_cells_flat(
+    records: Sequence[Dict[str, object]],
+    output_csv_path: str,
+) -> pd.DataFrame:
+    df = pd.DataFrame(records)
+    output_path = Path(output_csv_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if df.empty:
+        cols = [
+            "file_name",
+            "page_index",
+            "row_index",
+            "column_index",
+            "text",
+        ]
+        empty_df = pd.DataFrame(columns=cols)
+        empty_df.to_csv(output_path, index=False)
+        return empty_df
+
+    base_cols = [
+        "file_name",
+        "page_index",
+        "row_index",
+        "column_index",
+        "text",
+    ]
+    base_cols = [c for c in base_cols if c in df.columns]
+    other_cols = [c for c in df.columns if c not in base_cols]
+    df_out = df[base_cols + other_cols]
+    df_out.to_csv(output_path, index=False)
+    return df_out
