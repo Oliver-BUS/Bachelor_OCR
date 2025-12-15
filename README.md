@@ -5,7 +5,6 @@ into structured CSV files (one row per depth interval).
 
 The pipeline is designed for tables that contain at least:
 
-- Depth-from / depth-to (in metres)
 - Textual description of the soil/rock layer
 - Optional columns such as samples, remarks, etc.
 
