@@ -101,21 +101,6 @@ Useful flags:
 If you omit `--output-csv`, a file named `<pdf_stem>_structured.csv` is created
 under `<work_dir>`.
 
-### 3. Optional: validation against manual CSV
-
-Once you have a manually curated CSV, you can compare it to the automatic output:
-
-```python
-from postprocess import compare_with_manual
-
-mismatches = compare_with_manual(
-    auto_csv_path="outputs/my_log_structured.csv",
-    manual_csv_path="manual/my_log_reference.csv",
-)
-print(mismatches.head())
-```
-
-Rows in `mismatches` highlight differences in depth values or descriptions.
 
 ## Where to adjust for your data
 
